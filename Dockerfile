@@ -6,7 +6,7 @@ ARG TRINO_IMAGE=trinodb/trino:479
 # Stage 1: Python + psycopg2 on UBI (same base as Trino for glibc compatibility)
 FROM redhat/ubi10 AS python-deps
 RUN dnf install -y python3 python3-pip && dnf clean all
-RUN python3 -m pip install --no-cache-dir --target /opt/python-deps psycopg2-binary cryptography
+RUN python3 -m pip install --no-cache-dir --target /opt/python-deps psycopg2-binary cryptography bcrypt
 
 # Stage 2: Trino with catalog restore
 FROM ${TRINO_IMAGE}
@@ -23,13 +23,15 @@ COPY --from=python-deps /opt/python-deps/ /usr/lib64/python3.12/site-packages/
 # Copy init scripts
 COPY init-schema.sql /opt/trino-init/
 COPY fetch_catalogs.py /opt/trino-init/
+COPY init_password_auth.py /opt/trino-init/
 COPY entrypoint.sh /opt/trino-init/
-RUN chmod +x /opt/trino-init/entrypoint.sh /opt/trino-init/fetch_catalogs.py
+RUN chmod +x /opt/trino-init/entrypoint.sh /opt/trino-init/fetch_catalogs.py /opt/trino-init/init_password_auth.py
 
 # Ensure catalog dir exists and is writable
 RUN mkdir -p /etc/trino/catalog && chown -R trino:trino /etc/trino
 
-USER trino:trino
+# Run as root so entrypoint can configure password auth; it switches to trino for Trino process
+USER root
 
 ENTRYPOINT ["/opt/trino-init/entrypoint.sh"]
 EXPOSE 8080

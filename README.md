@@ -26,6 +26,8 @@ This repository contains a Docker-based deployment for [Trino](https://trino.io/
 
 - `PORT` – If Aiven injects a `PORT` env var, Trino will listen on it instead of 8080
 - `TRINO_CATALOG_ENCRYPTION_KEY` – **Secret.** When set, catalog properties stored in encrypted form are decrypted at startup. Use a Fernet key or any passphrase. Store as a secret in Aiven.
+- `TRINO_ADMIN_USER` – Admin username for Web UI and CLI. Requires `TRINO_ADMIN_PASSWORD`.
+- `TRINO_ADMIN_PASSWORD` – **Secret.** Admin password. When set with `TRINO_ADMIN_USER`, enables password authentication for the Web UI and CLI.
 
 ## PostgreSQL Schema
 
@@ -116,16 +118,19 @@ Encrypted rows use the format `{"_encrypted": true, "data": "<base64>"}`. Unencr
 
 ## Accessing Trino
 
-- **Web UI:** `https://<your-app-hostname>:8080/`
-- **CLI:** `trino --server https://<your-app-hostname>:8080`
+- **Web UI:** `https://<your-app-hostname>:8080/` – If `TRINO_ADMIN_USER`/`TRINO_ADMIN_PASSWORD` are set, login with those credentials.
+- **CLI:** `trino --server https://<your-app-hostname>:8080 --user <username> --password`
+
+Password authentication works behind Aiven's TLS-terminating proxy (`http-server.process-forwarded=true`).
 
 ## Project Structure
 
 ```
 trino/
 ├── Dockerfile          # Multi-stage: UBI Python + Trino
-├── entrypoint.sh       # Validates env, fetches catalogs, starts Trino
+├── entrypoint.sh       # Validates env, configures auth, fetches catalogs, starts Trino
 ├── fetch_catalogs.py   # Reads trino_catalogs from PG, writes .properties files
+├── init_password_auth.py  # Configures password auth when TRINO_ADMIN_USER/PASSWORD set
 ├── encrypt_catalog.py  # Helper to encrypt properties before INSERT (run locally)
 ├── init-schema.sql     # Schema reference (auto-applied by fetch_catalogs.py)
 └── README.md           # This file

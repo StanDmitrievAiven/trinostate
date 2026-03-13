@@ -13,9 +13,17 @@ fi
 echo "Using catalog database. Proceeding with startup."
 echo "---"
 
+# --- Configure password authentication (if TRINO_ADMIN_USER and TRINO_ADMIN_PASSWORD set) ---
+if [ -n "$TRINO_ADMIN_USER" ] && [ -n "$TRINO_ADMIN_PASSWORD" ]; then
+    echo "Configuring password authentication..."
+    python3 /opt/trino-init/init_password_auth.py
+    echo "---"
+fi
+
 # --- Initialize schema and fetch catalogs from PG ---
 echo "Fetching catalogs from database..."
 python3 /opt/trino-init/fetch_catalogs.py
+chown -R trino:trino /etc/trino/catalog 2>/dev/null || true
 echo "Catalogs synced."
 echo "---"
 
@@ -29,6 +37,6 @@ if [ -n "$PORT" ]; then
     fi
 fi
 
-# --- Start Trino ---
+# --- Start Trino (as trino user for security) ---
 echo "Starting Trino..."
-exec /usr/lib/trino/bin/run-trino
+exec runuser -u trino -- /usr/lib/trino/bin/run-trino

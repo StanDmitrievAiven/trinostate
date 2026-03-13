@@ -56,6 +56,9 @@ def main():
                 additions.append("http-server.authentication.type=PASSWORD")
             if "http-server.process-forwarded" not in content:
                 additions.append("http-server.process-forwarded=true")
+            # Allow HTTP for localhost (catalog watcher); required for internal REST API calls
+            if "http-server.authentication.allow-insecure-over-http" not in content:
+                additions.append("http-server.authentication.allow-insecure-over-http=true")
             # Password auth requires shared secret (use env or generate)
             if "internal-communication.shared-secret" not in content:
                 secret = os.environ.get("TRINO_INTERNAL_SECRET") or secrets.token_urlsafe(32)

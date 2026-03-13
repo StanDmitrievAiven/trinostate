@@ -37,12 +37,7 @@ if [ -n "$PORT" ]; then
     fi
 fi
 
-# --- Start Trino (as trino user for security) ---
+# --- Start Trino ---
+# Note: UBI10-micro lacks runuser/su; Trino runs as root. Consider USER trino if not using password auth.
 echo "Starting Trino..."
-if command -v runuser >/dev/null 2>&1; then
-    exec runuser -u trino -- /usr/lib/trino/bin/run-trino
-elif command -v su >/dev/null 2>&1; then
-    exec su -s /bin/sh trino -c "exec /usr/lib/trino/bin/run-trino"
-else
-    exec /usr/lib/trino/bin/run-trino
-fi
+exec /usr/lib/trino/bin/run-trino

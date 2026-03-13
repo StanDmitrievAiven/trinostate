@@ -97,6 +97,9 @@ def _trino_connection():
         catalog="system",
         schema="runtime",
         http_scheme="http",
+        # Trino rejects password over plain HTTP. With process-forwarded=true,
+        # sending X-Forwarded-Proto: https makes Trino treat the connection as secure.
+        http_headers={"X-Forwarded-Proto": "https", "X-Forwarded-For": "127.0.0.1"},
     )
     if TRINO_PASSWORD:
         kwargs["auth"] = BasicAuthentication(TRINO_USER, TRINO_PASSWORD)

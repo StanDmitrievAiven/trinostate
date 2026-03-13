@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS trino_catalogs (
   properties JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS trino_kafka_config (
+  id SERIAL PRIMARY KEY,
+  config_text TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 """
 
 
@@ -89,6 +94,16 @@ def main():
         encryption_key = os.environ.get("TRINO_CATALOG_ENCRYPTION_KEY")
         fernet = _get_fernet(encryption_key) if encryption_key else None
 
+        # Write Kafka client config if present (for SASL_SSL etc.)
+        kafka_config_path = "/etc/trino/kafka-client.properties"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT config_text FROM trino_kafka_config LIMIT 1")
+            kafka_row = cur.fetchone()
+        if kafka_row:
+            with open(kafka_config_path, "w") as f:
+                f.write(kafka_row["config_text"])
+            print("  Wrote kafka-client.properties")
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT name, properties FROM trino_catalogs")
             rows = cur.fetchall()
@@ -100,6 +115,13 @@ def main():
                 props = json.loads(props)
             if fernet and isinstance(props, dict):
                 props = _decrypt_properties(props, fernet)
+            # Kafka: filter invalid props, use kafka.config.resources
+            if props.get("connector.name") == "kafka":
+                invalid = {"kafka.sasl.jaas.config", "kafka.sasl.mechanism", "kafka.security.protocol",
+                          "kafka.ssl.endpoint.identification.algorithm"}
+                props = {k: v for k, v in props.items() if k not in invalid}
+                if kafka_row:
+                    props["kafka.config.resources"] = kafka_config_path
             path = os.path.join(catalog_dir, f"{name}.properties")
             with open(path, "w") as f:
                 for k, v in props.items():

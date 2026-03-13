@@ -5,3 +5,10 @@ CREATE TABLE IF NOT EXISTS trino_catalogs (
   properties JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Kafka client config (SASL_SSL etc.) - written to /etc/trino/kafka-client.properties
+CREATE TABLE IF NOT EXISTS trino_kafka_config (
+  id SERIAL PRIMARY KEY,
+  config_text TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

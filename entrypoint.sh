@@ -38,6 +38,10 @@ if [ -n "$PORT" ]; then
 fi
 
 # --- Start Trino ---
-# Note: UBI10-micro lacks runuser/su; Trino runs as root. Consider USER trino if not using password auth.
+# Use launcher directly (bypass run-trino; UBI10-micro lacks runuser)
 echo "Starting Trino..."
-exec /usr/lib/trino/bin/run-trino
+if grep -s -q 'node.id' /etc/trino/node.properties 2>/dev/null; then
+    exec /usr/lib/trino/bin/launcher run --etc-dir /etc/trino
+else
+    exec /usr/lib/trino/bin/launcher run --etc-dir /etc/trino -Dnode.id="${HOSTNAME:-trino}"
+fi

@@ -1,5 +1,6 @@
 # Trino on Aiven App Runtime with PostgreSQL catalog store
 # Catalogs/connectors are persisted in PG and restored on each startup
+# v2: use launcher directly (no run-trino) - fixes runuser: not found on UBI10-micro
 
 ARG TRINO_IMAGE=trinodb/trino:479
 

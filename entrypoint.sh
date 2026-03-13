@@ -62,6 +62,12 @@ done
 
 # --- Start catalog watcher (polls PG, runs CREATE CATALOG for new connectors) ---
 export TRINO_INTERNAL_URL="http://127.0.0.1:${TRINO_PORT}"
+# Ensure watcher gets password: write to file so it's available even if env inheritance is odd
+if [ -n "$TRINO_ADMIN_PASSWORD" ]; then
+    echo -n "$TRINO_ADMIN_PASSWORD" > /tmp/trino-watcher-password
+    chmod 600 /tmp/trino-watcher-password
+    export TRINO_ADMIN_PASSWORD_FILE=/tmp/trino-watcher-password
+fi
 python3 /opt/trino-init/catalog_watcher.py &
 WATCHER_PID=$!
 

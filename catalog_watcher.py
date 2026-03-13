@@ -28,7 +28,18 @@ except ImportError:
 
 TRINO_URL = os.environ.get("TRINO_INTERNAL_URL", "http://127.0.0.1:8080")
 TRINO_USER = os.environ.get("TRINO_ADMIN_USER", "admin")
-TRINO_PASSWORD = os.environ.get("TRINO_ADMIN_PASSWORD", "")
+TRINO_PASSWORD = (
+    os.environ.get("TRINO_ADMIN_PASSWORD")
+    or os.environ.get("TRINO_PASSWORD")
+    or ""
+)
+# Support password from file (e.g. Aiven mounts secrets as files)
+if not TRINO_PASSWORD and os.environ.get("TRINO_ADMIN_PASSWORD_FILE"):
+    try:
+        with open(os.environ["TRINO_ADMIN_PASSWORD_FILE"]) as f:
+            TRINO_PASSWORD = f.read().strip()
+    except Exception:
+        pass
 POLL_INTERVAL = int(os.environ.get("CATALOG_WATCHER_INTERVAL", "60"))
 
 
@@ -62,30 +73,40 @@ def _decrypt_properties(props, fernet):
 
 def trino_query(query: str) -> list:
     """Execute query on Trino via REST API."""
+    import base64 as b64
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    headers = {
+        "Content-Type": "text/plain",
+        "X-Trino-User": TRINO_USER,
+    }
+    auth_header = None
+    if TRINO_PASSWORD:
+        auth_header = f"Basic {b64.b64encode(f'{TRINO_USER}:{TRINO_PASSWORD}'.encode()).decode()}"
+        headers["Authorization"] = auth_header
     req = urllib.request.Request(
         f"{TRINO_URL}/v1/statement",
         data=query.encode("utf-8"),
-        headers={
-            "Content-Type": "application/text",
-            "X-Trino-User": TRINO_USER,
-        },
+        headers=headers,
         method="POST",
     )
-    if TRINO_PASSWORD:
-        import base64 as b64
-        auth = b64.b64encode(f"{TRINO_USER}:{TRINO_PASSWORD}".encode()).decode()
-        req.add_header("Authorization", f"Basic {auth}")
-    with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
-        data = json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+            data = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 403 and not TRINO_PASSWORD:
+            raise RuntimeError(
+                "HTTP 403 Forbidden: Trino has password auth enabled. "
+                "Set TRINO_ADMIN_USER and TRINO_ADMIN_PASSWORD (or TRINO_ADMIN_PASSWORD_FILE) in your app environment."
+            ) from e
+        raise
     next_uri = data.get("nextUri")
     while next_uri:
         time.sleep(0.2)
         req = urllib.request.Request(next_uri, method="GET")
-        if TRINO_PASSWORD:
-            req.add_header("Authorization", f"Basic {auth}")
+        if auth_header:
+            req.add_header("Authorization", auth_header)
         with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
             data = json.loads(r.read().decode())
         if data.get("error"):

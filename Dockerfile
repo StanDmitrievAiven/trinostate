@@ -6,7 +6,7 @@ ARG TRINO_IMAGE=trinodb/trino:479
 # Stage 1: Python + psycopg2 on UBI (same base as Trino for glibc compatibility)
 FROM redhat/ubi10 AS python-deps
 RUN dnf install -y python3 python3-pip && dnf clean all
-RUN python3 -m pip install --no-cache-dir --target /opt/python-deps psycopg2-binary
+RUN python3 -m pip install --no-cache-dir --target /opt/python-deps psycopg2-binary cryptography
 
 # Stage 2: Trino with catalog restore
 FROM ${TRINO_IMAGE}

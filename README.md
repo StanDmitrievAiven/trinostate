@@ -25,6 +25,7 @@ This repository contains a Docker-based deployment for [Trino](https://trino.io/
 ### Optional
 
 - `PORT` – If Aiven injects a `PORT` env var, Trino will listen on it instead of 8080
+- `TRINO_CATALOG_ENCRYPTION_KEY` – **Secret.** When set, catalog properties stored in encrypted form are decrypted at startup. Use a Fernet key or any passphrase. Store as a secret in Aiven.
 
 ## PostgreSQL Schema
 
@@ -79,6 +80,28 @@ INSERT INTO trino_catalogs (name, properties) VALUES (
 );
 ```
 
+### Encrypted Properties (Recommended for Production)
+
+To encrypt credentials before storing in PostgreSQL:
+
+1. **Generate an encryption key** (store as `TRINO_CATALOG_ENCRYPTION_KEY` secret in Aiven):
+   ```bash
+   python3 encrypt_catalog.py --generate-key
+   ```
+
+2. **Encrypt catalog properties** before inserting:
+   ```bash
+   python3 encrypt_catalog.py --key "YOUR_KEY_OR_PASSPHRASE" \
+     --properties '{"connector.name":"postgresql","connection-url":"jdbc:postgresql://host/db","connection-user":"user","connection-password":"secret"}' \
+     --output-format sql
+   ```
+
+3. **Run the output SQL** against your PostgreSQL database.
+
+4. **Set `TRINO_CATALOG_ENCRYPTION_KEY`** in Aiven (as a secret) to the same key.
+
+Encrypted rows use the format `{"_encrypted": true, "data": "<base64>"}`. Unencrypted rows continue to work when the key is not set.
+
 ## Deployment to Aiven App Runtime
 
 1. **Create a PostgreSQL Service** in Aiven (if you don't have one).
@@ -103,6 +126,7 @@ trino/
 ├── Dockerfile          # Multi-stage: UBI Python + Trino
 ├── entrypoint.sh       # Validates env, fetches catalogs, starts Trino
 ├── fetch_catalogs.py   # Reads trino_catalogs from PG, writes .properties files
+├── encrypt_catalog.py  # Helper to encrypt properties before INSERT (run locally)
 ├── init-schema.sql     # Schema reference (auto-applied by fetch_catalogs.py)
 └── README.md           # This file
 ```
@@ -119,10 +143,16 @@ After a restart, the same flow runs again, so all catalogs are restored from PG.
 
 ## Resource Requirements
 
-Trino is memory-intensive. Recommended:
+Trino is memory-intensive. For this **single-node** deployment (coordinator + worker in one container):
 
-- **RAM:** 4–8 GB minimum
-- **CPU:** 2 vCPUs
+| Resource | Minimum | Recommended | Production (reference) |
+|----------|---------|-------------|-------------------------|
+| **RAM**  | 4 GB    | **8–16 GB** | 64+ GB per worker      |
+| **CPU**  | 2 vCPUs | **4–8 vCPUs** | 16–32 vCPUs per worker |
+
+- **JVM heap:** The default image allocates ~70–80% of available RAM to the JVM. For small instances (4–8 GB), expect ~2–4 GB heap.
+- **Single-node vs cluster:** Production clusters typically use 64+ GB RAM and 16+ vCPUs per worker. This setup is suitable for development, testing, and light production workloads.
+- **Heavy queries:** Hash joins and large aggregations need more memory. If queries fail with out-of-memory errors, increase RAM or tune `query.max-memory-per-node` in `config.properties`.
 
 ## Troubleshooting
 
@@ -143,8 +173,33 @@ Trino is memory-intensive. Recommended:
 
 ## Security Considerations
 
-- Credentials in `trino_catalogs.properties` (e.g. `connection-password`) are stored in PostgreSQL. Restrict access to the catalog database.
-- Consider encrypting sensitive properties or using a secrets manager for production.
+### Current Security Posture
+
+| Layer | Status | Notes |
+|-------|--------|-------|
+| **PostgreSQL (Aiven)** | Encrypted in transit | TLS (`sslmode=require`) for all connections |
+| **PostgreSQL backups** | Encrypted at rest | Aiven encrypts backups |
+| **trino_catalogs table** | Optional encryption | Use `TRINO_CATALOG_ENCRYPTION_KEY` to encrypt credentials (see above) |
+| **Catalog .properties files** | Plain text at runtime | Decrypted in memory, written for Trino to read |
+| **Trino Web UI** | May expose credentials | `CREATE CATALOG` queries (including passwords) can appear in logs/UI |
+
+### Gaps and Risks
+
+1. **Credentials in plain text** – Without `TRINO_CATALOG_ENCRYPTION_KEY`, credentials are stored unencrypted. Use encryption for production.
+2. **Runtime exposure** – Decrypted properties are written to `.properties` files. Restrict filesystem access.
+3. **Trino's alternative** – Trino also supports `${ENV:VARIABLE}` for credentials in config; combine with encryption for defense in depth.
+
+### Recommendations for Production
+
+1. **Restrict PostgreSQL access** – Use a dedicated database/user for `trino_catalogs`. Limit access via Aiven's network controls and IAM.
+2. **Use environment variables for credentials** – Store only non-sensitive config in `trino_catalogs`; put passwords in env vars and reference them:
+   ```json
+   {"connector.name": "postgresql", "connection-url": "jdbc:...", "connection-user": "user", "connection-password": "${ENV:MYCATALOG_PASSWORD}"}
+   ```
+   Then set `MYCATALOG_PASSWORD` in Aiven's env vars. Trino resolves `${ENV:...}` at runtime.
+3. **Use built-in encryption** – Set `TRINO_CATALOG_ENCRYPTION_KEY` and use `encrypt_catalog.py` to encrypt properties before inserting. Credentials are stored encrypted in PostgreSQL.
+4. **Enable TLS for Trino** – Use a load balancer or configure Trino to serve HTTPS for client connections.
+5. **Audit access** – Enable PostgreSQL audit logging and monitor access to `trino_catalogs`.
 
 ## Resources
 

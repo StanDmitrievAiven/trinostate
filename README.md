@@ -108,13 +108,15 @@ Encrypted rows use the format `{"_encrypted": true, "data": "<base64>"}`. Unencr
 
 1. **Create a PostgreSQL Service** in Aiven (if you don't have one).
 2. **Create an App Runtime Application**
-   - Source: This GitHub repository
-   - Branch: `main`
-   - Build context: `trino/` (or root if the Dockerfile is at repo root)
+   - **Source:** `https://github.com/StanDmitrievAiven/trinostate`
+   - **Branch:** `main`
+   - **Build context:** `.` (root; Dockerfile is at repo root)
 3. **Connect PostgreSQL** in "Connect services" so `DATABASE_URL` is set.
 4. **Add catalogs** to the `trino_catalogs` table (via `psql` or any PostgreSQL client).
 5. **Configure port** – Open port **8080** in App Runtime.
 6. **Deploy** – Aiven builds and runs the container.
+
+Pushes to `main` will trigger a new build and deployment when auto-deploy is enabled.
 
 ## Accessing Trino
 
@@ -126,14 +128,13 @@ Password authentication works behind Aiven's TLS-terminating proxy (`http-server
 ## Project Structure
 
 ```
-trino/
-├── Dockerfile          # Multi-stage: UBI Python + Trino
-├── entrypoint.sh       # Validates env, configures auth, fetches catalogs, starts Trino
-├── fetch_catalogs.py   # Reads trino_catalogs from PG, writes .properties files
-├── init_password_auth.py  # Configures password auth when TRINO_ADMIN_USER/PASSWORD set
-├── encrypt_catalog.py  # Helper to encrypt properties before INSERT (run locally)
-├── init-schema.sql     # Schema reference (auto-applied by fetch_catalogs.py)
-└── README.md           # This file
+├── Dockerfile            # Multi-stage: UBI Python + Trino
+├── entrypoint.sh         # Validates env, configures auth, fetches catalogs, starts Trino
+├── fetch_catalogs.py     # Reads trino_catalogs from PG, writes .properties files
+├── init_password_auth.py # Configures password auth when TRINO_ADMIN_USER/PASSWORD set
+├── encrypt_catalog.py    # Helper to encrypt properties before INSERT (run locally)
+├── init-schema.sql       # Schema reference (auto-applied by fetch_catalogs.py)
+└── README.md             # This file
 ```
 
 ## How It Works

@@ -39,4 +39,10 @@ fi
 
 # --- Start Trino (as trino user for security) ---
 echo "Starting Trino..."
-exec runuser -u trino -- /usr/lib/trino/bin/run-trino
+if command -v runuser >/dev/null 2>&1; then
+    exec runuser -u trino -- /usr/lib/trino/bin/run-trino
+elif command -v su >/dev/null 2>&1; then
+    exec su -s /bin/sh trino -c "exec /usr/lib/trino/bin/run-trino"
+else
+    exec /usr/lib/trino/bin/run-trino
+fi

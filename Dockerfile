@@ -30,6 +30,9 @@ RUN chmod +x /opt/trino-init/entrypoint.sh /opt/trino-init/fetch_catalogs.py /op
 # Ensure catalog dir exists and is writable
 RUN mkdir -p /etc/trino/catalog && chown -R trino:trino /etc/trino
 
+# Install util-linux for runuser (switch to trino user when starting Trino)
+RUN microdnf install -y util-linux && microdnf clean all
+
 # Run as root so entrypoint can configure password auth; it switches to trino for Trino process
 USER root
 

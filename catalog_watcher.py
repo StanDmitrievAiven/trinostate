@@ -3,14 +3,13 @@
 Watch trino_catalogs in PostgreSQL and run CREATE CATALOG for new catalogs.
 Requires catalog.management=dynamic in Trino config.
 Runs in background; no Trino restart needed when catalogs are added to PG.
+Uses trino-python-client for proper auth handling.
 """
 import os
 import sys
 import json
 import base64
 import time
-import urllib.request
-import ssl
 
 try:
     import psycopg2
@@ -20,20 +19,36 @@ except ImportError:
     sys.exit(1)
 
 try:
+    from trino.dbapi import connect as trino_connect
+    from trino.auth import BasicAuthentication
+except ImportError:
+    trino_connect = None
+    BasicAuthentication = None
+
+try:
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 except ImportError:
     Fernet = None
 
+# Parse TRINO_INTERNAL_URL (e.g. http://127.0.0.1:8080)
 TRINO_URL = os.environ.get("TRINO_INTERNAL_URL", "http://127.0.0.1:8080")
+if "://" in TRINO_URL:
+    _scheme, _rest = TRINO_URL.split("://", 1)
+    _host_port = _rest.split("/")[0]
+    TRINO_HOST = _host_port.split(":")[0] if ":" in _host_port else _host_port
+    TRINO_PORT = int(_host_port.split(":")[1]) if ":" in _host_port else 8080
+else:
+    TRINO_HOST = "127.0.0.1"
+    TRINO_PORT = 8080
+
 TRINO_USER = os.environ.get("TRINO_ADMIN_USER", "admin")
 TRINO_PASSWORD = (
     os.environ.get("TRINO_ADMIN_PASSWORD")
     or os.environ.get("TRINO_PASSWORD")
     or ""
 )
-# Support password from file (e.g. Aiven mounts secrets as files)
 if not TRINO_PASSWORD and os.environ.get("TRINO_ADMIN_PASSWORD_FILE"):
     try:
         with open(os.environ["TRINO_ADMIN_PASSWORD_FILE"]) as f:
@@ -71,50 +86,32 @@ def _decrypt_properties(props, fernet):
         return props
 
 
-def trino_query(query: str) -> list:
-    """Execute query on Trino via REST API."""
-    import base64 as b64
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    headers = {
-        "Content-Type": "text/plain",
-        "X-Trino-User": TRINO_USER,
-    }
-    auth_header = None
-    if TRINO_PASSWORD:
-        auth_header = f"Basic {b64.b64encode(f'{TRINO_USER}:{TRINO_PASSWORD}'.encode()).decode()}"
-        headers["Authorization"] = auth_header
-    req = urllib.request.Request(
-        f"{TRINO_URL}/v1/statement",
-        data=query.encode("utf-8"),
-        headers=headers,
-        method="POST",
+def _trino_connection():
+    """Create Trino connection (uses official client for proper auth)."""
+    if not trino_connect:
+        raise RuntimeError("trino package required. Install with: pip install trino")
+    kwargs = dict(
+        host=TRINO_HOST,
+        port=TRINO_PORT,
+        user=TRINO_USER,
+        catalog="system",
+        schema="runtime",
+        http_scheme="http",
     )
+    if TRINO_PASSWORD:
+        kwargs["auth"] = BasicAuthentication(TRINO_USER, TRINO_PASSWORD)
+    return trino_connect(**kwargs)
+
+
+def trino_query(query: str) -> list:
+    """Execute query on Trino via trino-python-client."""
+    conn = _trino_connection()
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
-            data = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 403 and not TRINO_PASSWORD:
-            raise RuntimeError(
-                "HTTP 403 Forbidden: Trino has password auth enabled. "
-                "Set TRINO_ADMIN_USER and TRINO_ADMIN_PASSWORD (or TRINO_ADMIN_PASSWORD_FILE) in your app environment."
-            ) from e
-        raise
-    next_uri = data.get("nextUri")
-    while next_uri:
-        time.sleep(0.2)
-        req = urllib.request.Request(next_uri, method="GET")
-        if auth_header:
-            req.add_header("Authorization", auth_header)
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
-            data = json.loads(r.read().decode())
-        if data.get("error"):
-            raise RuntimeError(data["error"].get("message", str(data["error"])))
-        if data.get("data"):
-            return data["data"]
-        next_uri = data.get("nextUri")
-    return []
+        cur = conn.cursor()
+        cur.execute(query)
+        return cur.fetchall()
+    finally:
+        conn.close()
 
 
 def get_trino_catalogs() -> set:
@@ -160,7 +157,16 @@ def main():
     kafka_config_exists = os.path.exists(kafka_config_path)
 
     seen = set()
-    print(f"Catalog watcher started. Polling every {POLL_INTERVAL}s. New catalogs in PG will be added without restart.")
+    # Verify we can connect before entering loop
+    if not TRINO_PASSWORD:
+        print("WARNING: TRINO_ADMIN_PASSWORD not set. Watcher will fail if Trino has password auth.", file=sys.stderr)
+    else:
+        try:
+            get_trino_catalogs()
+            print("Catalog watcher started. Polling every {POLL_INTERVAL}s. New catalogs in PG will be added without restart.".format(POLL_INTERVAL=POLL_INTERVAL))
+        except Exception as e:
+            print(f"WARNING: Cannot connect to Trino: {e}", file=sys.stderr)
+            print("  Ensure TRINO_ADMIN_USER and TRINO_ADMIN_PASSWORD match your Trino password config.", file=sys.stderr)
 
     while True:
         try:

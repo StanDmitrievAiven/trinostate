@@ -39,9 +39,6 @@ fi
 
 # --- Start Trino ---
 # Use launcher directly (bypass run-trino; UBI10-micro lacks runuser)
+# Always set node.id=trino (hostnames like pod.ns.svc fail validation)
 echo "Starting Trino..."
-if grep -s -q 'node.id' /etc/trino/node.properties 2>/dev/null; then
-    exec /usr/lib/trino/bin/launcher run --etc-dir /etc/trino
-else
-    exec /usr/lib/trino/bin/launcher run --etc-dir /etc/trino -Dnode.id="${HOSTNAME:-trino}"
-fi
+exec /usr/lib/trino/bin/launcher run --etc-dir /etc/trino -Dnode.id=trino
